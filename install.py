@@ -96,10 +96,14 @@ def merge_settings(claude_dir: Path, python_cmd: str) -> str:
     with open(HERE / SETTINGS_SOURCE, "r") as f:
         incoming = json.load(f)
 
-    # Patch python command if the platform needs it
-    if python_cmd != "python3":
-        raw = json.dumps(incoming).replace("python3 ", f"{python_cmd} ")
-        incoming = json.loads(raw)
+    # Patch python command and expand ~ to the real hooks path.
+    # ~ does not expand in Windows cmd, which is what Claude Code uses to run
+    # hook commands on Windows. Write the absolute path so it works everywhere.
+    hooks_dir = claude_dir / "hooks"
+    raw = json.dumps(incoming)
+    raw = raw.replace("python3 ", f"{python_cmd} ")
+    raw = raw.replace("~/.claude/hooks/", str(hooks_dir).replace("\\", "/") + "/")
+    incoming = json.loads(raw)
 
     if settings_path.exists():
         with open(settings_path, "r") as f:
