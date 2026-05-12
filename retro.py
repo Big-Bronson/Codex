@@ -21,6 +21,7 @@ Binary files (detected by null bytes or known binary extensions) are skipped.
 Re-runs are cheap by default — only missing files are generated.
 """
 
+import io
 import json
 import os
 import subprocess
@@ -28,6 +29,12 @@ import sys
 import time
 import urllib.error
 import urllib.request
+
+# Force UTF-8 stdout/stderr on Windows so Unicode progress characters (✓ ✗)
+# don't crash on cp1252 consoles. Must happen before any print() call.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 from collections import defaultdict
 from pathlib import Path
 
