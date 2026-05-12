@@ -161,6 +161,59 @@ def check_api_key() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
 
 
+def persist_api_key(key: str) -> str:
+    """
+    Write the API key to the user's persistent environment so it survives
+    reboots and is visible to desktop apps (which don't inherit shell profiles).
+
+    Windows: setx writes to HKCU\\Environment — picked up by all future
+    processes. The current process won't see it until restart, which is fine
+    since we only need the hooks to find it, not the installer itself.
+
+    Unix: appends export line to ~/.zshrc or ~/.bashrc. Shell sessions started
+    after this will have the key; the current session won't until sourced.
+    """
+    if platform.system() == "Windows":
+        result = subprocess.run(
+            ["setx", "ANTHROPIC_API_KEY", key],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip())
+        return "written to user environment via setx (restart Claude Code to apply)"
+    else:
+        shell = os.environ.get("SHELL", "")
+        if "zsh" in shell:
+            rc = Path.home() / ".zshrc"
+        else:
+            rc = Path.home() / ".bashrc"
+        with open(rc, "a", encoding="utf-8") as f:
+            f.write(f'\nexport ANTHROPIC_API_KEY="{key}"\n')
+        return f"appended to {rc} (run 'source {rc}' or open a new terminal to apply)"
+
+
+def prompt_api_key() -> tuple:
+    """
+    Interactively prompt for the API key. Returns (key, desc) on success,
+    or (None, skip_reason) if the user declines.
+    Input is read with echo suppressed on supported platforms.
+    """
+    print()
+    print("  ANTHROPIC_API_KEY is not set.")
+    print("  The hooks call the Anthropic API (Haiku) to generate explanations.")
+    print("  You can get a key at https://console.anthropic.com/settings/keys")
+    print()
+    answer = input("  Enter your API key now, or press Enter to skip: ").strip()
+
+    if not answer:
+        return None, "skipped — set ANTHROPIC_API_KEY manually before using the hooks"
+
+    if not answer.startswith("sk-ant-"):
+        print("  Warning: key doesn't look like an Anthropic key (expected sk-ant-...) — saving anyway.")
+
+    return answer, None
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -183,9 +236,9 @@ def main():
     print()
 
     steps = [
-        ("Hook scripts",      lambda: install_hooks(claude_dir)),
-        ("settings.json",     lambda: merge_settings(claude_dir, python_cmd)),
-        ("CLAUDE.md",         lambda: install_claude_md(claude_dir)),
+        ("Hook scripts",  lambda: install_hooks(claude_dir)),
+        ("settings.json", lambda: merge_settings(claude_dir, python_cmd)),
+        ("CLAUDE.md",     lambda: install_claude_md(claude_dir)),
     ]
 
     results = {}
@@ -199,14 +252,23 @@ def main():
             results[label] = ("FAIL", str(e))
             failed = True
 
-    # API key is a warning, not a hard failure
+    # API key — prompt and persist if not already set
     if check_api_key():
-        results["ANTHROPIC_API_KEY"] = ("OK", "found in environment")
+        results["ANTHROPIC_API_KEY"] = ("OK", "already set in environment")
     else:
-        results["ANTHROPIC_API_KEY"] = ("WARN", "not set — hooks will error at runtime until this is exported")
+        key, skip_reason = prompt_api_key()
+        if key:
+            try:
+                desc = persist_api_key(key)
+                results["ANTHROPIC_API_KEY"] = ("OK", desc)
+            except Exception as e:
+                results["ANTHROPIC_API_KEY"] = ("WARN", f"could not persist automatically: {e} — set it manually")
+        else:
+            results["ANTHROPIC_API_KEY"] = ("WARN", skip_reason)
 
     # Checklist output
     icons = {"OK": "✓", "WARN": "!", "FAIL": "✗"}
+    print()
     print("Checklist:")
     for label, (status, desc) in results.items():
         print(f"  [{icons[status]}] {label}: {desc}")
@@ -217,7 +279,9 @@ def main():
         sys.exit(1)
     else:
         print("Installation complete.")
-        print("Open a project with a src/ directory and ask Claude to write a file there to verify.")
+        if platform.system() == "Windows":
+            print("Restart the Claude Code app to apply the API key to its environment.")
+        print("Then open a project with a src/ directory and ask Claude to write a file there to verify.")
 
 
 if __name__ == "__main__":
