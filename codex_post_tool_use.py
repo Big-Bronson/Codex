@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """
 Codex — PostToolUse Hook
-Fires after every Write/Edit to src/. Generates a plain-language explanation
-of the changed file and updates the .codex/src/ mirror. Appends to codex.log.
+Fires after every Write/Edit to the project's source root. Generates a
+plain-language explanation of the changed file and updates the .codex/src/
+mirror. Appends to codex.log.
+
+Source root defaults to "src". Override per-project by creating
+.codex/config.json with {"src_root": "your_dir"}.
 
 Input: JSON on stdin from Claude Code
 Required env: ANTHROPIC_API_KEY
@@ -17,9 +21,23 @@ from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-SRC_ROOT = "src"
 CODEX_ROOT = ".codex"
 LOG_PATH = os.path.join(CODEX_ROOT, "codex.log")
+
+
+def get_src_root() -> str:
+    """
+    Read src_root from .codex/config.json if present, otherwise fall back
+    to "src". Called once in main() so the hook always uses the project's
+    configured root rather than the hardcoded default.
+    """
+    config_path = os.path.join(CODEX_ROOT, "config.json")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+        return config.get("src_root", "src")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return "src"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -41,19 +59,17 @@ def get_diff(file_path: str) -> str:
         return f"[Could not retrieve diff: {e}]"
 
 
-def get_explanation_path(file_path: str) -> Path:
+def get_explanation_path(file_path: str, src_root: str) -> Path:
     """
-    Map src/auth/service.ps1 → .codex/src/auth/service.md
+    Map <src_root>/auth/service.ps1 → .codex/<src_root>/auth/service.md
     Strip extension, add .md, swap root prefix.
     """
     p = Path(file_path)
-    # Strip the src/ prefix
     try:
-        relative = p.relative_to(SRC_ROOT)
+        relative = p.relative_to(src_root)
     except ValueError:
-        # File is not under src/ — nothing to do
         return None
-    explanation_path = Path(CODEX_ROOT) / SRC_ROOT / relative.with_suffix(".md")
+    explanation_path = Path(CODEX_ROOT) / src_root / relative.with_suffix(".md")
     return explanation_path
 
 
@@ -192,12 +208,14 @@ def main():
     if not file_path:
         sys.exit(0)
 
-    # Only process files inside src/
-    if not file_path.startswith(SRC_ROOT + os.sep) and not file_path.startswith(SRC_ROOT + "/"):
+    src_root = get_src_root()
+
+    # Only process files inside the configured source root
+    if not file_path.startswith(src_root + os.sep) and not file_path.startswith(src_root + "/"):
         sys.exit(0)
 
     # Resolve explanation output path
-    explanation_path = get_explanation_path(file_path)
+    explanation_path = get_explanation_path(file_path, src_root)
     if explanation_path is None:
         sys.exit(0)
 

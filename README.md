@@ -63,6 +63,18 @@ my-project/
 
 Commit `.codex/` with the project so explanations travel with the code.
 
+## Per-Project Configuration
+
+By default the hook watches `src/`. To point it at a different directory, create `.codex/config.json` in the project root:
+
+```json
+{
+  "src_root": "Public"
+}
+```
+
+The hook reads this at runtime. No reinstall needed. If the file is absent, `src/` is used.
+
 ## Files
 
 | File | Purpose |
