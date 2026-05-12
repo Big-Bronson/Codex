@@ -94,9 +94,8 @@ Preserve all prior content and extend it.
 </existing_summary>
 """
 
-    prompt = f"""You are the Codex session summariser. A Claude Code session just ended.
-Produce a plain-language session summary that a developer can read to quickly understand
-what happened, what was built, and what to know before the next session.
+    prompt = f"""You are Codex. A Claude Code session just ended. Write a summary that closes the learning loop —
+not just what was built, but what the developer must now own and where to pick up next.
 
 Session date: {date_str}
 
@@ -111,20 +110,16 @@ Session transcript (recent exchanges):
 </transcript>
 {existing_section}
 
-Write the session summary using this exact structure:
+Write using this exact structure:
 
 # Session {date_str}
 
 ## What Was Built or Changed
-Plain English. What exists now that did not exist before, or what works differently.
+Plain English. What exists now that did not before, or works differently.
 Be specific — name files, features, and behaviours.
 
 ## Key Decisions
-What choices were made during this session? Include alternatives that were considered and rejected.
-
-## New Patterns Introduced
-Any pattern, approach, or convention used for the first time in this project.
-If none, omit this section.
+What choices were made? Include alternatives that were considered and rejected.
 
 ## Files Touched
 | File | What Changed |
@@ -132,13 +127,19 @@ If none, omit this section.
 | path/to/file.ext | One-line description |
 
 ## What You Should Be Able to Explain
-Before the next session, you should be able to explain the following without looking at the code:
-- [list of specific things]
+Write 3-5 specific questions the developer must answer without looking at the code.
+Write as actual questions grounded in what this session built — not topics or bullet summaries.
+Example format: "Why does offboard-user.ps1 write the log to Desktop rather than the project root?"
+
+## What To Read Before Next Session
+Which .codex/src/ files are most relevant to pick up where this left off?
+For each: name the file and one sentence on why it matters for what comes next.
+Derive from the files touched this session and the open questions below.
 
 ## Open Questions and Risks
-Anything flagged as uncertain, fragile, or needing follow-up. If none, write "None identified."
+Anything uncertain, fragile, or needing follow-up. If none, write "None identified."
 
-Write in plain, direct prose. No padding. Be specific to this actual session."""
+Write in plain, direct prose. No padding. Specific to this actual session."""
 
     payload = json.dumps({
         "model": "claude-haiku-4-5-20251001",

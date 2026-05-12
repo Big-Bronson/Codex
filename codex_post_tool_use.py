@@ -100,9 +100,10 @@ Preserve the change log section and update the rest to reflect the new state.
 </existing_explanation>
 """
 
-    prompt = f"""You are the Codex explanation engine. A source file was just written or edited.
-Produce a plain-language technical explanation of this file for a developer who wants to understand
-the system, not just the syntax.
+    prompt = f"""You are Codex. This file was just written or edited with AI assistance.
+The developer who co-wrote it now needs to own it independently — explain it so they can.
+Audience: a junior developer who shipped this code and must be able to explain every decision in it.
+Tone: a senior engineer debriefing a junior. Direct, specific, no praise.
 
 File: {file_path}
 
@@ -112,31 +113,36 @@ Changes (git diff or full content if new):
 </diff>
 {existing_section}
 
-Write the explanation using this exact structure:
+Write using this exact structure:
 
 ## {file_path}
 
 ### What This File Does
-One paragraph. System-level description. What role does this file play in the running system?
+One paragraph. What role does this file play in the running system?
 
 ### Why It Exists
-What operational reality or constraint forced this file into being? What problem is it solving?
+What operational reality forced this file into being? What breaks without it?
 
 ### What It Protects Against
-What failure mode, edge case, or risk does this code defend against? If none, say so.
+What failure mode or edge case does this code defend against? If none, say so.
 
 ### Invariants
-What conditions must always be true for this file to work correctly? List them.
+What must always be true for this file to work correctly? List them.
 
-### New Patterns (if any)
-If this edit introduces a pattern not seen in the file before, name it and explain it briefly.
-If no new patterns, omit this section.
+### Decisions Made Here
+What choices does this code reflect that a reader might not question?
+For each: name the decision, state the alternative, explain why it was rejected.
+Pull from the actual code — no invented or generic patterns.
+
+### If You Changed This
+What else would break or need updating if someone modified this file?
+Name specific files, functions, or behaviours that depend on it.
 
 ### Change Log
 Append one line: `- YYYY-MM-DD: <one sentence describing what changed>`
 If an existing change log is present above, keep all prior entries and add the new one at the top.
 
-Write in plain, direct prose. No padding. Be specific to this actual file, not generic."""
+Write in plain, direct prose. No padding. No praise. Specific to this actual file."""
 
     payload = json.dumps({
         "model": "claude-haiku-4-5-20251001",
