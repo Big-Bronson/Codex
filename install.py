@@ -93,7 +93,7 @@ def merge_settings(claude_dir: Path, python_cmd: str) -> str:
     """
     settings_path = claude_dir / "settings.json"
 
-    with open(HERE / SETTINGS_SOURCE, "r") as f:
+    with open(HERE / SETTINGS_SOURCE, "r", encoding="utf-8") as f:
         incoming = json.load(f)
 
     # Patch python command and expand ~ to the real hooks path.
@@ -106,7 +106,7 @@ def merge_settings(claude_dir: Path, python_cmd: str) -> str:
     incoming = json.loads(raw)
 
     if settings_path.exists():
-        with open(settings_path, "r") as f:
+        with open(settings_path, "r", encoding="utf-8") as f:
             existing = json.load(f)
         verb = "merged into existing"
     else:
@@ -133,7 +133,7 @@ def merge_settings(claude_dir: Path, python_cmd: str) -> str:
             if not entry_commands & registered_commands:
                 existing["hooks"][event_type].append(entry)
 
-    with open(settings_path, "w") as f:
+    with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(existing, f, indent=2)
 
     return f"{verb} settings.json"
