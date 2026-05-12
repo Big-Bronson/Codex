@@ -5,28 +5,30 @@ Backfills .codex/ explanations and session summaries for an existing project
 that did not have Codex installed from the start.
 
 Usage:
-    python retro.py [repo_path]
+    python retro.py [--force] [repo_path]
 
     repo_path  — absolute path to the git repo root (default: current directory)
+    --force    — overwrite existing .codex/ files (default: skip already-done files)
 
 Output:
-    .codex/<src_root>/<name>.md  — one explanation per source file
+    .codex/<src_root>/<name>.md   — one explanation per source file
     .codex/sessions/YYYY-MM-DD.md — one session summary per calendar day
 
 Required env: ANTHROPIC_API_KEY
 
 The script reads .codex/config.json for src_root (defaults to "src").
-Existing files are overwritten — safe to re-run.
+Binary files (detected by null bytes or known binary extensions) are skipped.
+Re-runs are cheap by default — only missing files are generated.
 """
 
 import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -36,6 +38,20 @@ MAX_DIFF_CHARS = 6000
 MAX_LOG_CHARS = 3000
 CODEX_ROOT = ".codex"
 
+MAX_TOKENS_FILE = 1024
+MAX_TOKENS_SESSION = 1500
+
+# Extensions that are always binary — skip without reading content
+BINARY_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".svg",
+    ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".exe", ".dll", ".so", ".dylib", ".bin", ".wasm",
+    ".mp3", ".mp4", ".wav", ".ogg", ".mov", ".avi",
+    ".ttf", ".otf", ".woff", ".woff2",
+    ".pyc", ".pyo", ".class",
+    ".lock",  # package lock files are text but useless to explain
+}
+
 # ── Repo helpers ──────────────────────────────────────────────────────────────
 
 def git(*args, cwd: str) -> str:
@@ -43,7 +59,8 @@ def git(*args, cwd: str) -> str:
     Run a git command in the given directory. Returns stdout as a string.
     Uses bytes-level decode with errors="replace" so git diff output containing
     non-UTF-8 sequences (binary patches, Windows cp1252 filenames, etc.) never
-    crashes the script.
+    crashes the script. Return code is intentionally ignored — callers treat
+    empty output as "nothing to report" (e.g. HEAD~1 on a single-commit repo).
     """
     r = subprocess.run(
         ["git"] + list(args),
@@ -63,17 +80,39 @@ def get_src_root(repo_path: str) -> str:
         return "src"
 
 
-def get_source_files(repo_path: str, src_root: str) -> list[str]:
+def is_binary(file_path: str) -> bool:
     """
-    Return all files that git knows about inside src_root, relative to repo_path.
+    Return True if the file should be skipped.
+    Checks extension first (cheap), then scans the first 8 KB for null bytes
+    (the standard heuristic git itself uses to detect binary content).
+    """
+    if Path(file_path).suffix.lower() in BINARY_EXTENSIONS:
+        return True
+    try:
+        with open(file_path, "rb") as f:
+            return b"\x00" in f.read(8192)
+    except Exception:
+        return False
+
+
+def get_source_files(repo_path: str, src_root: str) -> list:
+    """
+    Return all text files that git tracks inside src_root, relative to repo_path.
+    Binary files are filtered out here so callers never have to handle them.
     """
     output = git("ls-files", src_root, cwd=repo_path)
     if not output:
         return []
-    return [p for p in output.splitlines() if p.strip()]
+    all_files = [p for p in output.splitlines() if p.strip()]
+    text_files = []
+    for rel_path in all_files:
+        full_path = os.path.join(repo_path, rel_path)
+        if not is_binary(full_path):
+            text_files.append(rel_path)
+    return text_files
 
 
-def get_commits(repo_path: str) -> list[dict]:
+def get_commits(repo_path: str) -> list:
     """
     Return all commits oldest-first as dicts with hash, date (YYYY-MM-DD),
     author, and subject.
@@ -99,14 +138,20 @@ def get_commits(repo_path: str) -> list[dict]:
 
 # ── Anthropic API ─────────────────────────────────────────────────────────────
 
-def call_api(prompt: str) -> str:
+def call_api(prompt: str, max_tokens: int) -> str:
+    """
+    Call the Anthropic API and return the response text.
+    Retries up to 3 times on 429 (rate limit) with exponential backoff.
+    Other HTTP errors and network failures are returned as error strings
+    so the caller can write them to the output file and continue.
+    """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return "[Error: ANTHROPIC_API_KEY not set in environment]"
 
     payload = json.dumps({
         "model": MODEL,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }).encode("utf-8")
 
@@ -121,15 +166,24 @@ def call_api(prompt: str) -> str:
         method="POST",
     )
 
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            return data["content"][0]["text"]
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")
-        return f"[API error {e.code}: {body[:300]}]"
-    except Exception as e:
-        return f"[Request failed: {e}]"
+    backoff = 5
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return data["content"][0]["text"]
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt < 3:
+                print(f" [rate limited, retrying in {backoff}s]", end="", flush=True)
+                time.sleep(backoff)
+                backoff *= 2
+                continue
+            body = e.read().decode("utf-8", errors="replace")
+            return f"[API error {e.code}: {body[:300]}]"
+        except Exception as e:
+            return f"[Request failed: {e}]"
+
+    return "[API error: max retries exceeded on 429]"
 
 
 # ── File explanations ─────────────────────────────────────────────────────────
@@ -139,6 +193,10 @@ def explain_file(repo_path: str, rel_path: str) -> str:
     Generate a plain-language explanation for a source file using its full
     git history: the commit that introduced it, all subsequent commits that
     touched it, and the current content.
+
+    Note: git("diff", "HEAD~1", "HEAD", ...) returns empty string on a
+    single-commit repo because HEAD~1 does not exist. The git() helper ignores
+    the non-zero exit code, and the prompt handles the empty case explicitly.
     """
     intro_diff = git("log", "--follow", "--diff-filter=A", "-p", "--", rel_path, cwd=repo_path)
     latest_diff = git("diff", "HEAD~1", "HEAD", "--", rel_path, cwd=repo_path)
@@ -205,19 +263,17 @@ List newest first.
 
 Write in plain, direct prose. No padding. Be specific to this actual file."""
 
-    return call_api(prompt)
+    return call_api(prompt, MAX_TOKENS_FILE)
 
 
 # ── Session summaries ─────────────────────────────────────────────────────────
 
-def summarise_session(repo_path: str, date: str, commits: list[dict]) -> str:
+def summarise_session(repo_path: str, date: str, commits: list) -> str:
     """
     Generate a session summary for all commits on a given calendar day.
     """
     hashes = [c["hash"] for c in commits]
-    subjects = [c["subject"] for c in commits]
 
-    # Aggregate diff stats across all commits that day
     stat_lines = []
     diff_sample = ""
     for h in hashes:
@@ -263,44 +319,62 @@ Any non-obvious constraints, fixes, or discoveries revealed by this session's wo
 
 Write in plain, direct prose. No padding."""
 
-    return call_api(prompt)
+    return call_api(prompt, MAX_TOKENS_SESSION)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    repo_path = sys.argv[1] if len(sys.argv) > 1 else os.getcwd()
-    repo_path = os.path.abspath(repo_path)
+    args = sys.argv[1:]
+    force = "--force" in args
+    positional = [a for a in args if not a.startswith("--")]
+
+    repo_path = os.path.abspath(positional[0] if positional else os.getcwd())
 
     if not os.path.isdir(os.path.join(repo_path, ".git")):
         print(f"[FAIL] Not a git repository: {repo_path}")
         sys.exit(1)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not api_key:
+    if not os.environ.get("ANTHROPIC_API_KEY", "").strip():
         print("[FAIL] ANTHROPIC_API_KEY is not set in environment.")
         sys.exit(1)
 
     src_root = get_src_root(repo_path)
     print(f"Repo:     {repo_path}")
     print(f"src_root: {src_root}")
+    print(f"force:    {force}")
     print()
 
     # ── Phase 1: file explanations ─────────────────────────────────────────────
     files = get_source_files(repo_path, src_root)
+    skipped_binary = len(git("ls-files", src_root, cwd=repo_path).splitlines()) - len(files)
+
     if not files:
-        print(f"[WARN] No tracked files found under {src_root}/")
+        print(f"[WARN] No tracked text files found under {src_root}/")
     else:
-        print(f"Phase 1 — file explanations ({len(files)} files)")
+        label = f"Phase 1 — file explanations ({len(files)} files"
+        if skipped_binary:
+            label += f", {skipped_binary} binary skipped"
+        print(label + ")")
+
+        done = skipped = 0
         for i, rel_path in enumerate(files, 1):
-            stem = Path(rel_path).stem
-            out_path = Path(repo_path) / CODEX_ROOT / rel_path
-            out_path = out_path.with_suffix(".md")
-            print(f"  [{i}/{len(files)}] {rel_path} → {out_path.relative_to(repo_path)}", end="", flush=True)
+            out_path = (Path(repo_path) / CODEX_ROOT / rel_path).with_suffix(".md")
+            prefix = f"  [{i}/{len(files)}] {rel_path}"
+
+            if out_path.exists() and not force:
+                print(f"{prefix} — skip (exists)")
+                skipped += 1
+                continue
+
+            print(f"{prefix}", end="", flush=True)
             explanation = explain_file(repo_path, rel_path)
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(explanation, encoding="utf-8")
             print(" ✓")
+            done += 1
+
+        print(f"  {done} generated, {skipped} skipped (use --force to regenerate)")
 
     print()
 
@@ -310,7 +384,7 @@ def main():
         print("[WARN] No commits found.")
         return
 
-    by_date: dict[str, list] = defaultdict(list)
+    by_date = defaultdict(list)
     for c in commits:
         by_date[c["date"]].append(c)
 
@@ -318,13 +392,23 @@ def main():
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Phase 2 — session summaries ({len(by_date)} days)")
+    done = skipped = 0
     for i, (date, day_commits) in enumerate(sorted(by_date.items()), 1):
         out_path = sessions_dir / f"{date}.md"
-        print(f"  [{i}/{len(by_date)}] {date} ({len(day_commits)} commits)", end="", flush=True)
+        prefix = f"  [{i}/{len(by_date)}] {date} ({len(day_commits)} commits)"
+
+        if out_path.exists() and not force:
+            print(f"{prefix} — skip (exists)")
+            skipped += 1
+            continue
+
+        print(prefix, end="", flush=True)
         summary = summarise_session(repo_path, date, day_commits)
         out_path.write_text(summary, encoding="utf-8")
         print(" ✓")
+        done += 1
 
+    print(f"  {done} generated, {skipped} skipped (use --force to regenerate)")
     print()
     print("Done.")
     print(f"  File explanations: {Path(repo_path) / CODEX_ROOT / src_root}")
