@@ -157,51 +157,145 @@ def install_claude_md(claude_dir: Path) -> str:
     return "created"
 
 
-def check_api_key() -> bool:
-    return bool(os.environ.get("ANTHROPIC_API_KEY", "").strip())
+def find_api_key() -> tuple:
+    """
+    Search for an existing API key across all common storage locations.
+    Returns (key, location_description) or (None, None) if not found anywhere.
+
+    Checks in order:
+      1. Current process environment — key is already live
+      2. Windows registry HKCU\\Environment — set by a previous setx run but
+         not yet visible because the desktop app predates it
+      3. Shell profile files — key is persisted but desktop app never sourced them
+      4. .env file in home directory — manual setup some users prefer
+    """
+    import re
+
+    # 1. Live environment
+    val = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if val:
+        return val, "current environment"
+
+    # 2. Windows registry
+    if platform.system() == "Windows":
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as k:
+                val, _ = winreg.QueryValueEx(k, "ANTHROPIC_API_KEY")
+                if val:
+                    return val, "Windows user environment registry (needs restart to activate)"
+        except Exception:
+            pass
+
+    # 3. Shell profile files
+    profile_candidates = [
+        Path.home() / ".zshrc",
+        Path.home() / ".zprofile",
+        Path.home() / ".bash_profile",
+        Path.home() / ".bashrc",
+        Path.home() / ".profile",
+        Path.home() / ".config" / "fish" / "config.fish",
+    ]
+    pattern = re.compile(r'ANTHROPIC_API_KEY[=\s]+["\']?(sk-ant-[^\s"\']+)')
+    for path in profile_candidates:
+        if path.exists():
+            try:
+                match = pattern.search(path.read_text(encoding="utf-8", errors="replace"))
+                if match:
+                    return match.group(1), str(path)
+            except Exception:
+                pass
+
+    # 4. ~/.env
+    env_file = Path.home() / ".env"
+    if env_file.exists():
+        try:
+            match = pattern.search(env_file.read_text(encoding="utf-8", errors="replace"))
+            if match:
+                return match.group(1), str(env_file)
+        except Exception:
+            pass
+
+    return None, None
 
 
 def persist_api_key(key: str) -> str:
     """
-    Write the API key to the user's persistent environment so it survives
-    reboots and is visible to desktop apps (which don't inherit shell profiles).
+    Write the API key to the appropriate persistent location for this platform
+    so it survives reboots and is visible to desktop apps.
 
-    Windows: setx writes to HKCU\\Environment — picked up by all future
-    processes. The current process won't see it until restart, which is fine
-    since we only need the hooks to find it, not the installer itself.
+    Windows:
+      setx writes to HKCU\\Environment. Visible to all future processes;
+      requires restart for already-running apps.
 
-    Unix: appends export line to ~/.zshrc or ~/.bashrc. Shell sessions started
-    after this will have the key; the current session won't until sourced.
+    macOS:
+      Writes to ~/.zshrc (default shell since Catalina) or ~/.bash_profile
+      (bash login shell convention). Also runs launchctl setenv so the current
+      desktop session picks it up immediately without a restart.
+
+    Linux:
+      Writes to the profile file matching the active shell: fish config uses
+      'set -gx' syntax; zsh/bash use export. Checks for an existing entry
+      first so re-running the installer does not append duplicates.
     """
-    if platform.system() == "Windows":
+    system = platform.system()
+
+    if system == "Windows":
         result = subprocess.run(
             ["setx", "ANTHROPIC_API_KEY", key],
             capture_output=True, text=True
         )
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip())
-        return "written to user environment via setx (restart Claude Code to apply)"
+        return "written to Windows user environment via setx (restart Claude Code to apply)"
+
+    # Determine target profile file
+    shell = os.environ.get("SHELL", "")
+    if "fish" in shell:
+        profile = Path.home() / ".config" / "fish" / "config.fish"
+        export_line = f'\nset -gx ANTHROPIC_API_KEY "{key}"\n'
+    elif system == "Darwin":
+        # macOS login shells read .bash_profile not .bashrc; zsh is default
+        profile = Path.home() / (".zshrc" if "zsh" in shell else ".bash_profile")
+        export_line = f'\nexport ANTHROPIC_API_KEY="{key}"\n'
     else:
-        shell = os.environ.get("SHELL", "")
-        if "zsh" in shell:
-            rc = Path.home() / ".zshrc"
-        else:
-            rc = Path.home() / ".bashrc"
-        with open(rc, "a", encoding="utf-8") as f:
-            f.write(f'\nexport ANTHROPIC_API_KEY="{key}"\n')
-        return f"appended to {rc} (run 'source {rc}' or open a new terminal to apply)"
+        profile = Path.home() / (".zshrc" if "zsh" in shell else ".bashrc")
+        export_line = f'\nexport ANTHROPIC_API_KEY="{key}"\n'
+
+    # Guard against duplicate entries
+    existing = ""
+    if profile.exists():
+        existing = profile.read_text(encoding="utf-8", errors="replace")
+    if "ANTHROPIC_API_KEY" not in existing:
+        profile.parent.mkdir(parents=True, exist_ok=True)
+        with open(profile, "a", encoding="utf-8") as f:
+            f.write(export_line)
+
+    notes = [f"written to {profile}"]
+
+    # macOS: also activate immediately for the current desktop session
+    if system == "Darwin":
+        try:
+            subprocess.run(
+                ["launchctl", "setenv", "ANTHROPIC_API_KEY", key],
+                capture_output=True, timeout=5
+            )
+            notes.append("activated in current desktop session via launchctl")
+        except Exception:
+            notes.append("launchctl activation failed — restart Claude Code to apply")
+
+    return " | ".join(notes)
 
 
 def prompt_api_key() -> tuple:
     """
-    Interactively prompt for the API key. Returns (key, desc) on success,
-    or (None, skip_reason) if the user declines.
-    Input is read with echo suppressed on supported platforms.
+    Interactively prompt for the API key. Returns (key, None) on success
+    or (None, reason) if the user declines.
     """
     print()
     print("  ANTHROPIC_API_KEY is not set.")
     print("  The hooks call the Anthropic API (Haiku) to generate explanations.")
-    print("  You can get a key at https://console.anthropic.com/settings/keys")
+    print("  Get a key at: https://console.anthropic.com/settings/keys")
     print()
     answer = input("  Enter your API key now, or press Enter to skip: ").strip()
 
@@ -209,7 +303,7 @@ def prompt_api_key() -> tuple:
         return None, "skipped — set ANTHROPIC_API_KEY manually before using the hooks"
 
     if not answer.startswith("sk-ant-"):
-        print("  Warning: key doesn't look like an Anthropic key (expected sk-ant-...) — saving anyway.")
+        print("  Warning: key doesn't match expected format (sk-ant-...) — saving anyway.")
 
     return answer, None
 
@@ -252,9 +346,10 @@ def main():
             results[label] = ("FAIL", str(e))
             failed = True
 
-    # API key — prompt and persist if not already set
-    if check_api_key():
-        results["ANTHROPIC_API_KEY"] = ("OK", "already set in environment")
+    # API key — search all known locations before prompting
+    key, location = find_api_key()
+    if key:
+        results["ANTHROPIC_API_KEY"] = ("OK", f"found in {location}")
     else:
         key, skip_reason = prompt_api_key()
         if key:
