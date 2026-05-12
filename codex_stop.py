@@ -94,8 +94,9 @@ Preserve all prior content and extend it.
 </existing_summary>
 """
 
-    prompt = f"""You are Codex. A Claude Code session just ended. Write a summary that closes the learning loop —
-not just what was built, but what the developer must now own and where to pick up next.
+    prompt = f"""You are Codex. A Claude Code session just ended. Write a summary that serves two purposes:
+accurate documentation of what was built and decided, and a teaching resource that closes the
+learning loop so the developer can explain what was built and continue confidently next session.
 
 Session date: {date_str}
 

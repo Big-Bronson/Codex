@@ -101,9 +101,10 @@ Preserve the change log section and update the rest to reflect the new state.
 """
 
     prompt = f"""You are Codex. This file was just written or edited with AI assistance.
-The developer who co-wrote it now needs to own it independently — explain it so they can.
-Audience: a junior developer who shipped this code and must be able to explain every decision in it.
-Tone: a senior engineer debriefing a junior. Direct, specific, no praise.
+Produce output that serves two purposes: accurate technical documentation of what this file does
+and why, and a teaching resource that helps the developer who co-wrote it understand every decision
+well enough to own it independently.
+Tone: direct, specific, no padding, no praise.
 
 File: {file_path}
 
