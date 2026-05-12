@@ -377,6 +377,10 @@ def main():
         if platform.system() == "Windows":
             print("Restart the Claude Code app to apply the API key to its environment.")
         print("Then open a project with a src/ directory and ask Claude to write a file there to verify.")
+        print()
+        print("To backfill an existing project that pre-dates Codex:")
+        print("  python retro.py [repo_path]          # generates explanations + session summaries from git history")
+        print("  python retro.py --force [repo_path]  # regenerate even if .codex/ files already exist")
 
 
 if __name__ == "__main__":

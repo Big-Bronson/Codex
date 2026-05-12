@@ -75,11 +75,37 @@ By default the hook watches `src/`. To point it at a different directory, create
 
 The hook reads this at runtime. No reinstall needed. If the file is absent, `src/` is used.
 
+## Retroactive Backfill
+
+If you install Codex on a project that already has git history, the `.codex/` directory will be empty until new files are written. `retro.py` backfills it from the existing history in one run.
+
+```bash
+# Generate explanations and session summaries for an existing repo
+python retro.py /path/to/my-project
+
+# Default: skips files that already exist in .codex/ (cheap to re-run)
+# Use --force to regenerate everything
+python retro.py --force /path/to/my-project
+
+# Run from inside the repo (uses current directory)
+cd my-project
+python /path/to/Codex/retro.py
+```
+
+What it produces:
+- `.codex/<src_root>/<filename>.md` — one explanation per tracked text file, built from the file's full git history
+- `.codex/sessions/YYYY-MM-DD.md` — one session summary per calendar day of commits
+
+Binary files (images, compiled artifacts, lock files) are detected and skipped automatically. The script respects `.codex/config.json` for `src_root` the same way the live hook does.
+
+Re-runs are safe and cheap by default — only files missing from `.codex/` are generated. Pass `--force` to regenerate everything.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `install.py` | Installer — run this |
+| `install.py` | Installer — run this first |
+| `retro.py` | Retroactive backfill — run once on existing projects |
 | `codex_post_tool_use.py` | PostToolUse hook — generates per-file explanations |
 | `codex_stop.py` | Stop hook — generates session summaries |
 | `settings.json` | Hook wiring template (merged into your settings by the installer) |
