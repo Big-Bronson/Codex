@@ -18,6 +18,7 @@ from pathlib import Path
 HERE = Path(__file__).parent  # always the directory the script lives in
 
 HOOK_SCRIPTS = [
+    "codex_pre_tool_use.py",
     "codex_post_tool_use.py",
     "codex_stop.py",
 ]
