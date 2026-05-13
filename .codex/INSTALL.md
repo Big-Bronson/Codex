@@ -1,32 +1,36 @@
-## INSTALL.md
+## install.py
 
 ### What This File Does
-
-This is the setup manual for Codex, a system that automatically generates explanations and summaries for code written in Claude Code sessions. It walks a developer through four concrete steps: copying hook scripts and configuration files into their local Claude environment, configuring an API key, initializing a project with Git and required directories, and verifying the system works by triggering a hook and checking its output.
+This is an automated deployment script that bootstraps the Codex hook system into a Claude Code installation. It copies hook scripts into `~/.claude/hooks/`, merges hook configuration into `~/.claude/settings.json` without overwriting existing data, installs teaching rules into `~/.claude/CLAUDE.md`, and detects or prompts for an Anthropic API key. The script is platform-aware and runs successfully from any working directory on Windows, Linux, and macOS.
 
 ### Why It Exists
-
-Codex requires multiple moving pieces to function—two Python hook scripts, a global teaching document, and a settings configuration file—all of which must be placed in specific locations with specific permissions. Without this guide, developers would have no way to know where to put files, what order to do things in, or how to verify success. The document also establishes the contract between the user's machine (where hooks run) and each project (which feeds data to the hooks).
+Claude Code's hook system requires files to be placed in specific locations and configuration to be wired into settings.json in a idempotent way. A developer installing Codex needs a single entry point that handles platform differences (Python binary names, path separators, Windows registry checks), respects existing user configuration, and clearly reports what was done. Manual file copying and JSON editing is error-prone and non-repeatable.
 
 ### What It Protects Against
-
-The guide defends against several failure modes: developers overwriting their existing `settings.json` file wholesale instead of merging it; API keys not being available to hook processes at execution time; projects without Git initialization or `src/` directories triggering silent hook failures; and developers assuming the system is broken when it simply hasn't been triggered yet. The troubleshooting section specifically addresses the most common failure states (missing `.codex/` directories, empty explanations, no session summaries) and provides debugging steps for each.
+- **Character encoding crashes on Windows**: Forces UTF-8 output before any print() call so Unicode checklist characters (✓ ✗ !) don't fail on cp1252 consoles.
+- **Path expansion failures on Windows**: Converts `~/.claude/hooks/` to absolute paths because Windows cmd.exe doesn't expand `~` in hook command strings.
+- **Duplicate hook registration**: The merge strategy compares existing command strings to avoid adding the same hook twice when the installer is re-run.
+- **Configuration loss**: Backs up the previous CLAUDE.md as CLAUDE.md.bak before overwriting, and only merges new hooks into settings.json rather than replacing it.
+- **Missing Python interpreter**: Tests both `python3` and `python` to find a working binary before patching settings.json with hardcoded command strings.
+- **Incomplete installations**: Validates all source files exist before proceeding, preventing silent partial deployments.
 
 ### Invariants
-
-- Hook scripts must be in `~/.claude/hooks/` and executable
-- `global_CLAUDE.md` must be at `~/.claude/CLAUDE.md`
-- `settings.json` must be at `~/.claude/settings.json` and properly merged if already present
-- Every project using Codex must have Git initialized
-- Every project must have a `src/` directory—hooks only fire for writes under `src/`
-- Every project must have a `CLAUDE.md` file with specific sections (What This Project Is, Current Build State, Architecture, Known Fragile Areas)
-- `ANTHROPIC_API_KEY` environment variable must be exported in shells where Claude Code runs
-- The `.codex/` output directory is created on first hook execution, not manually
+- `HERE` always points to the directory containing install.py, allowing the script to locate its sibling source files regardless of the current working directory.
+- `~/.claude/` is the canonical Codex configuration root on all platforms (Claude Code uses this path even on Windows).
+- settings.json hooks configuration is always a dictionary with event type keys (PostToolUse, PreToolUse, Stop) mapping to lists of entries, each with a "hooks" list containing objects with "command" fields.
+- Hook scripts are only marked executable on Unix-like systems; Windows uses the python binary in the command string instead.
+- Any existing hooks configuration in settings.json is preserved; new hooks are only added if their command strings don't already exist.
 
 ### Key Patterns
-
-**Explicit configuration over magic**: The guide walks through every file placement and environment variable explicitly rather than assuming automatic discovery. **Local-then-project hierarchy**: User-level hooks and global teaching rules apply to all projects; project-level `CLAUDE.md` customizes behavior per project. **Verification-driven setup**: Rather than assuming files are in place, step 4 gives concrete commands to test that the system is actually working. **Troubleshooting by symptom**: The troubleshooting section groups failure modes by observable outcome (missing directory, empty file, no summary) rather than by technical cause, making it more useful to someone debugging blindly.
+- **Platform branching**: Conditional logic for Windows vs. Unix (executable bits, path separators, registry checks) rather than abstracting into a shared layer.
+- **Idempotent merge**: Settings and hooks are merged by inspecting command string equality, making repeated runs safe and producing the same result.
+- **String templating**: JSON is dumped to a raw string, searched-and-replaced for python_cmd and hook paths, then re-parsed—simpler than walking the tree structure.
+- **In-place update with single backup**: CLAUDE.md backups are overwritten each run, keeping exactly one previous version available without accumulation.
+- **Fail-fast validation**: Source files are checked before any installation step begins, catching configuration errors early.
 
 ### Change Log
-
-- 2026-05-12: Initial release with full installation and verification procedures, git strategy guidance, and troubleshooting for four common failure modes
+- 2026-05-13: Self-install and retroactive backfill of .codex/ directory structure.
+- 2026-05-12: Add PreToolUse hook injection before edits and explicit UTF-8 encoding on all settings.json file opens.
+- 2026-05-12: Document retro.py in README and surface it in installer output; broaden API key detection and add platform-aware persistence.
+- 2026-05-12: Prompt for API key during install and persist it system-wide; fix Windows path expansion and add README.
+- 2026-05-12: Initial release with PostToolUse and Stop hooks, global CLAUDE.md teaching rules, and settings.json hook wiring.

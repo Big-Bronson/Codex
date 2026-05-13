@@ -1,26 +1,37 @@
 ## README.md
 
 ### What This File Does
-This is the user-facing entry point and instruction manual for Codex, a system that automatically generates markdown documentation for code files and work sessions by hooking into Claude Code's lifecycle. It explains what Codex does, how to install it, how to configure projects, and documents the purpose of each component file in the system.
+
+This is the user-facing entry point and installation guide for Codex, a system that automatically generates markdown explanations of source code files and session summaries by hooking into Claude Code's execution pipeline. It documents what the system does, how to install it, how to configure it per-project, and what files comprise the implementation.
 
 ### Why It Exists
-Users installing Codex need to understand what they're getting, what prerequisites are required, how to run the installer, and how to prepare their projects. Without this document, the system is opaque and unusable. The README also serves as the "agent-discoverable entry point"—when Claude Code introspects this repository, it reads README.md first to understand the project's purpose and structure.
+
+Claude Code needs a discoverable, human-readable explanation of what Codex is and how to use it. Without this, users who clone the repository have no clear starting point. The README also serves as a contract between the system's behavior (what the hooks do) and user expectations (what output to expect where). It was added alongside the initial Windows path fix because the installer couldn't succeed silently without documentation guiding users through setup and validation.
 
 ### What It Protects Against
-It protects against silent installation failures by documenting the installer's behavior (what it modifies, where, and how to verify success). It prevents projects from being misconfigured by specifying the exact three prerequisites needed (`src/` directory, git initialization, `CLAUDE.md`). It guards against data loss by clarifying that `.codex/` should be committed to git and that re-running the installer is safe. It also documents the per-project configuration escape hatch (`.codex/config.json`) so users don't get stuck with hardcoded `src/` if their project structure differs.
+
+It protects against installation confusion by explicitly listing prerequisites (`ANTHROPIC_API_KEY` in environment, Python 3.7+, Claude Code installed) so users know what's missing before they run `install.py`. It protects against silent hook failures by documenting the exact output structure users should see in `.codex/`. It protects against lost work by recommending that `.codex/` be committed to git, ensuring explanations and session logs travel with the code. It addresses the retroactive backfill problem by documenting `retro.py` for projects with existing git history.
 
 ### Invariants
-- The installer must be run before Codex hooks activate
-- Projects must have `src/` directory (or a configured alternative via `.codex/config.json`) for hooks to fire
-- Projects must be git-initialized for hooks to extract diffs
-- `ANTHROPIC_API_KEY` must be in the environment at hook execution time
-- The `.codex/` directory structure mirrors the project's source structure under the configured `src_root`
-- All generated documentation should be committed alongside source code
+
+- The `src/` directory (or configured `src_root`) must exist before hooks fire; hooks only process files written beneath this path.
+- Git must be initialized in the project; hooks depend on `git diff` output.
+- The `.codex/` directory structure must be creatable and writable by the hook processes.
+- `ANTHROPIC_API_KEY` must be in the environment when hooks execute; they fail silently otherwise.
+- `install.py` must be run before hooks can function; it wires them into `~/.claude/settings.json`.
 
 ### Key Patterns
-**Three-layer documentation**: immediate explanation (what it does), procedural guidance (how to install and configure), and reference table (what each file is for). The document moves from high-level concept → setup → verification → troubleshooting/edge cases, following a "journey" pattern that meets users where they are. It also uses concrete file trees and JSON examples rather than abstract descriptions, grounding the explanation in runnable commands.
+
+**Progressive disclosure**: Installation is covered first (the immediate need), then project setup, then output expectations, then advanced topics like per-project configuration and retroactive backfill. Users get what they need to start, then deeper details.
+
+**Concrete examples**: Every concept is paired with actual file paths or code snippets (`.codex/src/service.md`, the `config.json` JSON structure, the `retro.py` command invocations) so users can ground abstract descriptions in reality.
+
+**Idempotency emphasis**: The README explicitly states "Safe to re-run — it will not duplicate hook entries" and "Re-runs are safe and cheap by default" to lower the perceived cost of experimentation and give users confidence they won't break their setup.
+
+**Specification by structure**: The output structure is shown as a directory tree with inline comments, which is more scannable and concrete than prose description.
 
 ### Change Log
-- 2026-05-12: Document retro.py in README and surface it in installer output
-- 2026-05-12: Make source root configurable via .codex/config.json  
+
+- 2026-05-12: Document `retro.py` in README and surface it in installer output
+- 2026-05-12: Make source root configurable via `.codex/config.json`
 - 2026-05-12: Fix Windows path expansion and add README

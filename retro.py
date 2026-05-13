@@ -106,11 +106,20 @@ def get_source_files(repo_path: str, src_root: str) -> list:
     """
     Return all text files that git tracks inside src_root, relative to repo_path.
     Binary files are filtered out here so callers never have to handle them.
+
+    .codex/ is always excluded regardless of src_root. Without this guard,
+    a project with src_root="." would feed .codex/ explanation files back into
+    retro as source files, generating explanations of explanations and creating
+    a .codex/.codex/ subtree.
     """
     output = git("ls-files", src_root, cwd=repo_path)
     if not output:
         return []
-    all_files = [p for p in output.splitlines() if p.strip()]
+    codex_prefix = CODEX_ROOT.rstrip("/") + "/"
+    all_files = [
+        p for p in output.splitlines()
+        if p.strip() and not p.startswith(codex_prefix)
+    ]
     text_files = []
     for rel_path in all_files:
         full_path = os.path.join(repo_path, rel_path)

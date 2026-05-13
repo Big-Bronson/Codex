@@ -2,34 +2,36 @@
 
 ### What This File Does
 
-This is a configuration manifest that establishes teaching conventions and operational rules for AI-assisted development sessions. It's a contract between Steve (the developer) and Claude (the AI) that specifies how code should be explained, what assumptions are safe to make, and how the automated Codex hook system behaves. It runs once per session as context and is consulted whenever decisions about code quality, communication style, or explanation depth need to be made.
+This is a configuration manifest that tells Claude (the AI) how to behave during development sessions with Steve Vella. It's not executable code—it's a standing instruction set that shapes how explanations are generated, what assumptions are safe to make, and what guardrails apply to code generation. The file sits at the project root and acts as a persistent context layer, read at the start of each session to establish ground rules.
 
 ### Why It Exists
 
-Steve builds projects in learning mode—each session is as much about understanding patterns and system design as it is about shipping features. Without explicit teaching rules, Claude would default to task-completion mode (write fast, explain briefly). This file inverts that: it makes comprehension the primary goal and flags when a new pattern appears. It also documents the Codex hook infrastructure so Steve knows that explanations are being auto-generated and doesn't need to request them manually.
+Steve learns by building, not by being given finished solutions. He needs explanations grounded in *why* code exists—what operational problem it solves, not just what the syntax does. Without this file, Claude would default to generic task-completion mode: write the code, assume the user knows the reasoning, move on. This file forces a different contract: every piece of code must be justifiable in system terms, and that justification must be explicit in the work product (via the Codex hook system). It also documents Steve's technical context (MSP background, Linux/Python/Bash comfort, no need for fundamentals re-explanation) so explanations can be pitched correctly.
 
 ### What It Protects Against
 
-It prevents shallow technical explanation. By requiring system-level reasoning (what does this do, why does it exist, what does it prevent, what invariant does it maintain), it catches code that "works" but relies on magic or unexplained heuristics. It also prevents context drift: by stating Steve's background upfront (MSP, Linux, Python, Bash), it stops Claude re-explaining fundamentals and wasting session tokens. The multi-file comprehension guardrail prevents Claude from shipping coordinated changes where the interaction between files is invisible.
+This file protects against three failure modes:
+
+1. **Shallow comprehension**: Code written and immediately forgotten because the *why* was never captured. The Codex hooks (referenced here) force written explanations into a logged artifact.
+2. **Mismatched explanation level**: Wasting time re-explaining TCP/IP to someone with networking experience, or skipping crucial context for someone new to a pattern.
+3. **Undocumented assumptions**: Multi-file changes where the interaction between files is opaque. The "comprehension guardrails" section explicitly require a plain-language summary before sign-off.
 
 ### Invariants
 
-- Every file in `src/` gets an automatic explanation written to `.codex/src/` after modification (PostToolUse hook fires)
-- Every session generates a summary in `.codex/sessions/YYYY-MM-DD.md` (Stop hook fires)
-- Project-level CLAUDE.md files override these global rules if they exist
-- The Anthropic API key is always available as `ANTHROPIC_API_KEY` in the environment
-- Communication must be direct and risk-transparent (fragile code is flagged immediately, not buried)
+- This file is read at the start of every session and defines the global rule set.
+- Any project-specific `CLAUDE.md` in a subdirectory *overrides* these rules, not supplements them.
+- The Codex hook system (PostToolUse and Stop hooks) runs automatically; Claude does not need to manually invoke explanations.
+- The default assumptions (Git init'd, Python 3, jq available, API key in environment) must hold true or tool invocations will fail silently.
+- All code written must be explainable section-by-section; if it cannot be, it should not be written.
 
 ### Key Patterns
 
-**Teaching-first development**: Code is justified before it's written, not after. Explanations happen inline and are reinforced by hooks.
+**Standing instruction set**: This is a human-readable contract that persists across sessions and shapes AI behaviour without being code. It's declarative (what the rules are) rather than imperative (how to enforce them).
 
-**Hook-based automation**: Explanation labour is offloaded to PostToolUse and Stop hooks so the developer doesn't manually request summaries. The system is self-documenting.
+**Context-as-configuration**: Instead of Steve repeating his background and learning style each session, it's written once and trusted to be read. Reduces friction, ensures consistency.
 
-**Explicit context**: Background, learning goals, and communication preferences are stated once and remain in scope for the entire session, reducing negotiation overhead.
-
-**Guardrail-based comprehension**: Multi-file changes require explicit confirmation of interactions before completion, preventing distributed complexity from hiding.
+**Layered override model**: Global rules (this file) + project-specific rules (project CLAUDE.md) allow defaults without brittleness.
 
 ### Change Log
 
-- 2026-05-12: Initial release, Codex hook system with installer
+- 2026-05-12: Initial release; global teaching rules, explanation contract, Codex hook reference, communication style, and default environment assumptions.

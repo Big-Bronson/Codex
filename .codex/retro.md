@@ -1,24 +1,43 @@
 ## retro.py
 
 ### What This File Does
-This script backfills Codex documentation for existing Git repositories that were not using Codex from the start. It crawls the Git history of a project's source files, generates plain-language technical explanations for each file based on its commit history and current content, and creates session summaries organized by date. The output is written to `.codex/<src_root>/<filename>.md` for individual files and `.codex/sessions/YYYY-MM-DD.md` for daily summaries.
+
+This script backfills the `.codex/` directory with AI-generated explanations for an existing project that didn't have Codex enabled from the start. It scans the git repository's source files, extracts their full commit history, calls Claude to generate plain-language technical explanations, and writes both per-file markdown documents and per-day session summaries.
 
 ### Why It Exists
-When a developer adopts Codex on an existing project, there is no historical record of explanations for files that predate the adoption. This script solves the cold-start problem by retroactively generating those explanations using the Git history that already exists, allowing Codex to cover the entire project's evolution without manual intervention.
+
+When Codex is installed mid-project, there's no historical record of explanations for files that predate the installation. This script solves the cold-start problem by mining git history to reconstruct that missing context. It allows teams to retroactively document legacy code without manually writing explanations or starting fresh with a new repository.
 
 ### What It Protects Against
-The code defends against several practical deployment hazards: (1) **encoding crashes** — Git output containing non-UTF-8 sequences (Windows cp1252 filenames, binary diffs, etc.) are decoded with `errors="replace"` rather than crashing; (2) **Windows console incompatibility** — stdout/stderr are explicitly reconfigured to UTF-8 before any output to prevent cp1252 encoding crashes when printing Unicode characters like ✓ and ✗; (3) **accidental processing of binary files** — files are filtered by extension and null-byte detection before explanation generation; (4) **API rate limits** — the `call_api()` function retries up to 3 times with exponential backoff on 429 responses; (5) **incomplete repositories** — Git commands gracefully handle edge cases like `HEAD~1` on single-commit repos by ignoring return codes and treating empty output as "nothing to report."
+
+The script defends against several categories of failure:
+
+- **Encoding crashes on Windows**: Reconfigures stdout/stderr to UTF-8 with error replacement before any output, preventing cp1252 console crashes when displaying Unicode progress characters (✓ ✗).
+- **Non-UTF-8 git output**: The `git()` helper uses `errors="replace"` when decoding subprocess output, so binary diffs, cp1252 filenames, or other non-UTF-8 sequences never crash the parser.
+- **Binary file processing**: The `is_binary()` function checks file extensions and scans for null bytes to avoid feeding executables, images, or compiled files to the API.
+- **Codex recursion**: Explicitly filters out `.codex/` paths from file discovery, preventing the script from explaining explanations when `src_root` is set to `.`.
+- **API rate limits**: The `call_api()` function retries up to 3 times on 429 responses with exponential backoff.
+- **Missing git history edge cases**: Tolerates single-commit repos and files with no introduction diffs by treating empty git output as "nothing to report."
 
 ### Invariants
-- `ANTHROPIC_API_KEY` must be set in the environment, or all API calls will return error strings without crashing the script.
-- The Git repository at `repo_path` must be valid and accessible; invalid repos cause Git commands to return empty strings, which are handled as "no data" rather than failures.
-- `.codex/config.json` (if present) must be valid JSON; if it is not, `src_root` defaults to `"src"`.
-- Binary files (detected by extension or null bytes) are never opened for explanation, preventing crashes from unprintable content.
-- All file paths are relative to `repo_path` and are consistently normalized by `git ls-files`, so path handling is deterministic.
+
+- `ANTHROPIC_API_KEY` environment variable must be set before any API call.
+- `repo_path` must point to the root of a valid git repository.
+- `.codex/config.json` must exist or have sensible defaults applied (`src_root` defaults to `"src"`).
+- All generated output files must be written with UTF-8 encoding.
+- Files matching `BINARY_EXTENSIONS` or containing null bytes must never be passed to the API.
+- `.codex/` itself must be excluded from file discovery regardless of `src_root` value.
+- Session summaries must be keyed by `YYYY-MM-DD` dates extracted from commit timestamps.
 
 ### Key Patterns
-**Graceful degradation through error strings** — API failures and Git errors are returned as human-readable strings and written to output files rather than raising exceptions, allowing the script to continue processing remaining files. **Cheap re-runs** — the `--force` flag controls whether existing `.codex/` files are overwritten; by default, the script only generates missing files, making incremental runs fast. **Binary detection layering** — extension check (O(1)) happens first, then null-byte scanning (O(1) on typical files), so binary files are rejected cheaply. **Encoding-safe subprocess wrapper** — the `git()` helper function decodes all subprocess output with `errors="replace"`, making it safe to pipe any Git output without crashing on non-UTF-8 bytes. **Token budget awareness** — the API is called with different `max_tokens` limits for file explanations (1024) versus session summaries (1500) to control cost and latency per use case.
+
+- **Encoding-safe subprocess wrapping**: The `git()` helper centralizes all git command execution and always decodes output with error replacement, making it safe to call without try-except blocks.
+- **Graceful API error handling**: `call_api()` returns error strings (prefixed with `[Error: ...]`) instead of raising exceptions, allowing the script to continue and write failed results to disk for inspection.
+- **Extension-first binary detection**: `is_binary()` checks file extensions before reading file content, avoiding the cost of I/O for known binary types.
+- **Deferred file reading**: Source file content is read only once per file and passed into the prompt context rather than accessed repeatedly.
+- **History aggregation by date**: Commits are collected and grouped by date for session summary generation, allowing multiple commits from the same day to be bundled into one summary.
 
 ### Change Log
+
 - 2026-05-12: Fix cp1252 crash on Windows by reconfiguring stdout to UTF-8
-- 2026-05-12: Add retro.py: retroactive Codex backfill for existing projects
+- 2026-05-12: Add retro.py — retroactive Codex generator for existing projects

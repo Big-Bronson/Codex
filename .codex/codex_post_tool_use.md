@@ -2,40 +2,31 @@
 
 ### What This File Does
 
-This is a Git hook that fires after any file write or edit in a Claude Code session. It captures what changed, sends the diff to Claude via API, and receives back a structured plain-language explanation of the file's purpose, design decisions, and dependencies. That explanation gets written to `.codex/src/` (mirroring the source tree structure) and a one-line summary gets appended to `codex.log`. The hook acts as a living documentation engine—every time code changes, the explanation updates automatically.
+This is a Git hook that runs after every file write or edit in the project's source directory. It captures what changed, sends the diff to Claude via the Anthropic API, and gets back a plain-language explanation of the file's purpose, design decisions, and failure modes. That explanation is written to `.codex/src/` as a mirror of the source tree, and a one-line summary is appended to `codex.log` for audit and discovery.
 
 ### Why It Exists
 
-When AI assists with writing code, the developer can end up with working code they don't fully own mentally. They understand the syntax but not the design tradeoffs, constraints, or invariants baked in. This hook solves that by forcing an explanation to be generated and recorded immediately after each edit, while the context is fresh. It also creates a searchable audit trail in `codex.log` so you can see what changed and why without digging through git history. The hook makes the collaboration artifact—the reasoning behind decisions—explicit and persistent.
+As a codebase grows, developers lose context about *why* files exist and what invariants they protect. Git diffs show *what* changed but not *why*. This hook closes that gap by automatically documenting every edit in language a human can reason about. The explanations accumulate in a queryable log and a structured mirror, making it possible to understand system design without digging through commits or asking the original author.
 
 ### What It Protects Against
 
-The hook defends against three failure modes: (1) code drift where explanations go stale and become misleading, (2) knowledge loss when the AI context window expires and you forget why a design choice was made, and (3) onboarding friction when new developers (or the original developer six months later) can't understand the actual intent from syntax alone. It also guards against over-reliance on git commit messages by keeping structured, semantically consistent explanations in a parallel tree.
+**Missing API key**: returns a safe error message rather than crashing. **File not under source root**: skips processing instead of breaking. **Git not available**: falls back to reading the file directly. **Malformed config**: defaults to "src" if `.codex/config.json` is missing or broken. **API failures**: logs HTTP error details rather than silently failing. **Encoding errors**: uses `errors="replace"` when reading source files to handle non-UTF-8 content gracefully.
 
 ### Invariants
 
-- `ANTHROPIC_API_KEY` must be set in the environment, or all explanations fail gracefully.
-- Every file under the configured `src_root` that gets written must produce a corresponding `.md` explanation file under `.codex/<src_root>/`.
-- The explanation path must preserve the directory structure of the source tree.
-- `codex.log` entries must always include a timestamp and file path, maintaining chronological append-only order.
-- The git diff must be retrievable; if not, the full file content is used as fallback.
-- Configuration in `.codex/config.json` (if present) takes precedence over the hardcoded `src_root` default.
-- Existing explanations are preserved and appended to, not overwritten; the change log grows upward.
+- `CODEX_ROOT` (`.codex`) must be writable and must contain `config.json` (optional, defaults to `src_root: "src"`).
+- Every explanation must have a Change Log section; prior entries must be preserved.
+- The explanation path mirrors the source path exactly, only changing the root prefix and extension (`.md`).
+- `call_claude()` must receive `ANTHROPIC_API_KEY` in the environment; without it, the hook degrades gracefully instead of blocking.
+- `get_explanation_path()` returns `None` if the file is not under the configured source root; callers must handle this.
 
 ### Key Patterns
 
-**Configuration layering**: The hook reads from `.codex/config.json` to allow per-project source root override, falling back to "src" if absent. This keeps the tool flexible without requiring edits to the hook itself.
-
-**Graceful degradation**: Every operation that might fail (API call, git diff, file I/O) has a try-except wrapper that returns an error message instead of crashing. The hook never blocks the editor.
-
-**Diff-as-context**: Rather than re-analyzing the entire file, the hook sends only the git diff (or full content for new files) to Claude. This keeps API tokens low and focuses explanation on what actually changed.
-
-**Mirror tree structure**: Explanations live in `.codex/<src_root>/` so the directory layout matches the source tree exactly. This makes it trivial to map between a source file and its explanation without string manipulation.
-
-**Append-only log**: `codex.log` is write-once per edit, never mutated. Each entry includes a timestamp and file path, creating an immutable record of what happened and when.
+**Graceful degradation**: Every integration point (git, file I/O, API calls) wraps errors and returns partial data rather than failing hard. **Configuration layering**: hardcoded defaults (`src_root: "src"`) are overridable via `.codex/config.json`, allowing per-project customization. **Structural prompting**: the Claude prompt specifies exact markdown sections (What This File Does, Why It Exists, etc.) so explanations are predictable and queryable. **Truncation for cost**: diffs and existing explanations are capped at 4000 and 3000 characters respectively, keeping API calls cheap. **Path symmetry**: source files map to explanations by swapping the root prefix and changing the extension, making the mirror navigable.
 
 ### Change Log
 
-- 2026-05-12: Refactor to serve both documentation and pedagogy in Codex prompts; shift from documentation-only to teaching-focused explanations; add "Decisions Made Here" and "If You Changed This" sections.
-- 2026-05-12: Make source root configurable via `.codex/config.json` so hook works with any project layout.
-- 2026-05-12: Initial release of Codex hook system with PostToolUse and Stop hooks, global CLAUDE.md teaching rules, settings.json wiring, and install.py automation.
+- 2026-05-12: refactor: serve both documentation and pedagogy in Codex prompts
+- 2026-05-12: refactor: shift Codex prompts from documentation to pedagogy
+- 2026-05-12: Make source root configurable via .codex/config.json
+- 2026-05-12: Initial release: Codex hook system with installer

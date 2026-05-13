@@ -1,27 +1,26 @@
 ## codex_pre_tool_use.py
 
 ### What This File Does
-This is a pre-execution hook that runs before Claude Code applies any Write/Edit/MultiEdit operation to files in your project's source root. It reads a JSON event from stdin, looks up whether a `.codex` explanation file exists for the target file, and if one does, prints that explanation to stdout so Claude Code can inject it into Claude's context before the edit happens. It always exits cleanly with code 0, never blocking execution.
+This is a hook that runs *before* Claude Code executes a Write, Edit, or MultiEdit operation on any file in your project's source directory. If a `.codex` explanation file already exists for that target file, this hook reads it and prints it to stdout—which Claude Code then injects into Claude's context window so Claude sees the prior understanding of the code before making changes. If no explanation exists yet (first write to that file), the hook exits silently.
 
 ### Why It Exists
-When Claude edits a file it has already documented in `.codex`, Claude should see that prior understanding before making changes. This prevents Claude from re-learning the file from scratch or contradicting its own previous analysis. The hook enables context injection without requiring API calls, external services, or blocking behavior — it's a lightweight bridge between stored explanations and Claude's active editing context.
+Claude's context resets between tool calls. When Claude edits a file it previously generated documentation for, that documentation isn't automatically available unless explicitly injected. This hook closes that loop: your `.codex` explanations become living context that inform every subsequent edit, preventing Claude from losing architectural understanding or reintroducing issues it already documented.
 
 ### What It Protects Against
-This code defends against several silent failure modes: malformed JSON input (catches and exits cleanly), missing or unparseable config files (falls back to "src" root), file paths outside the configured source root (skips them silently), and read errors on the explanation file (catches all exceptions and exits). It also handles the case where no explanation exists yet (first write to a file) by exiting silently rather than printing a spurious message or failing. The dual path-prefix check (`startswith(src_root + os.sep)` and `startswith(src_root + "/")`) prevents matching false positives like "src_alt" when looking for "src".
+- **Context loss**: Claude editing a file without remembering what it documented about that file's purpose or constraints
+- **Over-talking**: The hook is designed to fail silent (always exit 0, never block)—it cannot hang Claude or break the tool pipeline if the `.codex` directory is missing, corrupted, or unreadable
+- **Path confusion**: Files outside `src_root` are ignored; the path mapping logic is kept identical to `codex_post_tool_use.py` so both hooks agree on what's in scope
 
 ### Invariants
-- The `.codex` directory and `config.json` must be readable or absent (graceful degradation to defaults).
-- The explanation file path must map back to a relative path under `src_root` or it is skipped.
-- The hook must always exit 0; no scenario should cause a non-zero exit.
-- The explanation file path transformation must exactly mirror `codex_post_tool_use.py` so pre- and post-hooks operate on the same files.
-- File paths in the event JSON come from Claude Code and are either `file_path` or `path` keys in `tool_input`.
+- `get_src_root()` must return a consistent value throughout a session (reads from `.codex/config.json`)
+- The explanation file path mapping (`<src_root>/auth/service.ps1` → `.codex/<src_root>/auth/service.md`) must match exactly the reverse mapping in `codex_post_tool_use.py`
+- The hook must always exit with code 0, even on error—it cannot block Claude
+- Only files under `src_root` (and within it) trigger context injection; files elsewhere are silently skipped
 
 ### Key Patterns
-**Fail-safe exit pattern**: Every error condition (`except`, missing file, invalid path) calls `sys.exit(0)` rather than raising or exiting nonzero. The hook prioritizes never blocking Claude over completeness.
-
-**Config mirroring**: The `get_src_root()` and `get_explanation_path()` functions use identical logic to `codex_post_tool_use.py` so both hooks share a single source of truth for directory mapping and naming conventions.
-
-**Structured hint block**: The output wraps the explanation in recognizable markers (`[Codex] Prior understanding...` and `[End Codex context]`) so Claude Code can reliably detect and extract the injected context.
+- **Fail-safe design**: Every error path (malformed JSON, missing config, unreadable files, path outside src_root) exits 0 without output—the hook never crashes or halts the tool
+- **Symmetric logic**: `get_src_root()` and `get_explanation_path()` are documented as exact mirrors of the post-hook equivalents, maintaining consistency between the before and after phases
+- **Structured output**: Printed context is wrapped in `[Codex]` and `[End Codex context]` markers so Claude Code can reliably parse and inject it
 
 ### Change Log
-- 2026-05-12: Initial commit — added PreToolUse hook to inject prior `.codex` context before file edits, with fallback to "src" root and silent exit on first writes or missing explanations.
+- 2026-05-12: Added PreToolUse hook to inject prior .codex context before file edits
