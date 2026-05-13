@@ -13,6 +13,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+# Force UTF-8 stdout/stderr on Windows so Unicode checklist characters (✓ ✗ !)
+# don't crash on cp1252 consoles. Must happen before any print() call.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 HERE = Path(__file__).parent  # always the directory the script lives in
